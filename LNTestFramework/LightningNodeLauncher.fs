@@ -14,6 +14,7 @@ open BTCPayServer.Lightning.LND
 open BTCPayServer.Lightning
 open NBitcoin
 open NBitcoin.RPC
+open LNTestFramework.Utils
 
 type LauncherSettings = {
   NETWORK: string
@@ -203,20 +204,28 @@ module LightningNodeLauncher =
 
 
     type LightningNodeLauncher() =
-      let composeFilePath = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "../../../../LNTestFramework/docker-compose.yml"))
-      member this.createBuilder ([<CallerMemberName>] [<Optional>] ?caller: string, [<Optional>] ?network: Network) =
-         if not (File.Exists(composeFilePath)) then failwith "Could not find docker-compose file"
-         let name = match caller with
-                    | None -> failwith "caller member name not spplyed!"
-                    | Some i -> Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), i))
-         let net = match network with
-                   | Some n -> n
-                   | None -> Network.RegTest
-         if not (Directory.Exists(name)) then
-            Directory.CreateDirectory(name) |> ignore
-         else 
-            Directory.Delete(name, true)
-            Directory.CreateDirectory(name) |> ignore
-         new LightningNodeBuilder(name, net, composeFilePath)
+
+        let getComposeFilePath() =
+            let path1 = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), "../../../../LNTestFramework/docker-compose.yml")) // for testing
+            let path2 = Path.GetFullPath(Path.Combine(getAssemblyDirectory(), "../../contentFiles/any/netstandard2.0/docker-compose.yml")) // for production
+            if File.Exists(path1) then path1
+            else if File.Exists(path2) then path2
+            else failwithf "path not found in %s" path2
+
+        member this.createBuilder ([<CallerMemberName>] [<Optional>] ?caller: string, [<Optional>] ?network: Network) =
+             let composeFilePath = getComposeFilePath()
+             printf "using compose file %s" composeFilePath
+             let name = match caller with
+                        | None -> failwith "caller member name not spplyed!"
+                        | Some i -> Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), i))
+             let net = match network with
+                       | Some n -> n
+                       | None -> Network.RegTest
+             if not (Directory.Exists(name)) then
+                Directory.CreateDirectory(name) |> ignore
+             else 
+                Directory.Delete(name, true)
+                Directory.CreateDirectory(name) |> ignore
+             new LightningNodeBuilder(name, net, composeFilePath)
 
     let lnLauncher = new LightningNodeLauncher()
