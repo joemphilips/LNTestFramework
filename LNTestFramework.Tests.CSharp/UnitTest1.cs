@@ -16,7 +16,7 @@ namespace LNTestFramework.Tests.CSharp
                 builder.ConnectAll();
                 var clients = builder.GetClients();
                 builder.PrepareFunds(Money.Satoshis(1000000m));
-                builder.OpenChannel(clients.Rebalancer, clients.ThirdParty, Money.Satoshis(500000m));
+                builder.OpenChannel(clients.Bitcoin, clients.Rebalancer, clients.ThirdParty, Money.Satoshis(500000m));
             }
         }
     }
