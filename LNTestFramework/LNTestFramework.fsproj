@@ -21,13 +21,14 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="Utils.fs" />
+  </ItemGroup>
+  <ItemGroup>
     <Content Include="docker-compose.yml" />
     <Content Include="lnd.rpc.swagger.json" />
-  </ItemGroup>
-
-  <ItemGroup>
     <Compile Include="TaskBuilder.fs" />
     <Compile Include="Utils.fs" />
+    <Compile Include="LNDSwaggerProvider.fs" />
     <Compile Include="LightningNodeLauncher.fs" />
     <Compile Include="DockerComposeGenerator.fs" />
     <Compile Include="Tests.fs" />
@@ -38,6 +39,5 @@
     <PackageReference Include="SwaggerProvider" Version="0.9.0" />
     <PackageReference Include="xunit" Version="2.4.0" />
     <PackageReference Include="NBitcoin" Version="4.1.1.81" />
-    <Compile Include="Utils.fs" />
   </ItemGroup>
 </Project>
