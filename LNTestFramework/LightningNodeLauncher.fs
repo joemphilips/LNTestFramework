@@ -98,13 +98,16 @@ module LightningNodeLauncher =
 
         let waitLnSynced (bitcoin: RPCClient) (lnClient: ILightningClient) =
             task {
-                while true do
+                let! lnInfo = lnClient.GetInfo()
+                let! height = bitcoin.GetBlockCountAsync()
+                let mutable shouldWait = (lnInfo.BlockHeight < height)
+                while shouldWait do
                     let! lnInfo = lnClient.GetInfo()
                     let! height = bitcoin.GetBlockCountAsync()
-                    if (lnInfo.BlockHeight < height) then
-                        do! Task.Delay(500)
-                    else
-                        return ()
+                    shouldWait <- (lnInfo.BlockHeight < height)
+                    printf "height in bitcoin is %s and height in lnd is %s \n" (height.ToString()) (lnInfo.BlockHeight.ToString())
+                    do! Task.Delay(500)
+                return ()
             }
 
         interface IDisposable with
@@ -176,32 +179,38 @@ module LightningNodeLauncher =
 
         member this.OpenChannelAsync(cashCow: RPCClient, from: ILightningClient, dest: ILightningClient, amount: Money) =
             task {
-                let! destInvoice = dest.CreateInvoice(LightMoney.Satoshis(1000m), "EnsureConnectedToDest", TimeSpan.FromSeconds(5000.0))
+                let! destInvoice = dest.CreateInvoice(LightMoney.op_Implicit(1000), "EnsureConnectedToDest", TimeSpan.FromSeconds(5000.0))
                 let! info = dest.GetInfo()
                 let request = new OpenChannelRequest()
                 request.NodeInfo <- info.NodeInfo
                 request.ChannelAmount <- amount
                 request.FeeRate <- new NBitcoin.FeeRate(0.0004m)
-                while true do
+                let! payResult = from.Pay(destInvoice.BOLT11)
+                let mutable notOpened = payResult.Result = PayResult.CouldNotFindRoute
+                while notOpened do
                     let! payResult = from.Pay(destInvoice.BOLT11)
-                    if payResult.Result = PayResult.CouldNotFindRoute then
-                        let! response = from.OpenChannel(request)
-                        if response.Result = OpenChannelResult.CannotAffordFunding then
-                            let! addr = from.GetDepositAddress()
-                            let! _ = cashCow.SendToAddressAsync(addr, Money.Coins(0.1m))
-                            let! _ = cashCow.GenerateAsync(10)
-                            do! waitLnSynced cashCow from
-                            do! waitLnSynced cashCow dest
-                        if response.Result = OpenChannelResult.PeerNotConnected then
-                            do! from.ConnectTo(info.NodeInfo)
-                        if response.Result = OpenChannelResult.NeedMoreConf then
-                            let! _ = cashCow.GenerateAsync(6)
-                            do! waitLnSynced cashCow from
-                            do! waitLnSynced cashCow dest
-                        if response.Result = OpenChannelResult.AlreadyExists then 
-                            do! Task.Delay(1000)
-                    else if payResult.Result = PayResult.Ok then
-                        return ()
+                    notOpened <- payResult.Result = PayResult.CouldNotFindRoute
+                    Console.WriteLine("Openning channel ...")
+                    let! response = from.OpenChannel(request)
+                    if response.Result = OpenChannelResult.CannotAffordFunding then
+                        Console.WriteLine("Cannot afford fund")
+                        let! addr = from.GetDepositAddress()
+                        let! _ = cashCow.SendToAddressAsync(addr, Money.Coins(0.1m))
+                        let! _ = cashCow.GenerateAsync(10)
+                        do! waitLnSynced cashCow from
+                        do! waitLnSynced cashCow dest
+                    if response.Result = OpenChannelResult.PeerNotConnected then
+                        Console.WriteLine("Peer not conn")
+                        do! from.ConnectTo(info.NodeInfo)
+                    if response.Result = OpenChannelResult.NeedMoreConf then
+                        Console.WriteLine("Need more conf")
+                        let! _ = cashCow.GenerateAsync(6)
+                        do! waitLnSynced cashCow from
+                        do! waitLnSynced cashCow dest
+                    if response.Result = OpenChannelResult.AlreadyExists then 
+                        Console.WriteLine("already exists")
+                        do! Task.Delay(1000)
+                return ()
             }
 
         member this.OpenChannel(cashCow: RPCClient, from: ILightningClient, dest: ILightningClient, amount: Money) =
