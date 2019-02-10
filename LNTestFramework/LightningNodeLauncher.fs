@@ -10,7 +10,6 @@ open System.Threading.Tasks
 open System.Runtime.InteropServices
 open System.Runtime.CompilerServices
 open Microsoft.FSharp.Reflection
-open BTCPayServer.Lightning.LND
 open BTCPayServer.Lightning
 open NBitcoin
 open NBitcoin.RPC
@@ -28,7 +27,7 @@ type LauncherSettings = {
 
 type Clients = {
   Bitcoin: NBitcoin.RPC.RPCClient
-  Rebalancer: LndClient
+  Rebalancer: LNDSwaggerProvider
   Custody: ILightningClient
   ThirdParty: ILightningClient
 }
@@ -150,7 +149,7 @@ module LightningNodeLauncher =
                 Bitcoin = new RPCClient(RPCCredentialString.Parse("0I5rfLbJEXsg:yJt7h7D8JpQy"),
                                         new Uri(sprintf "http://localhost:%d" settings.BITCOIND_RPCPORT),
                                         network)
-                Rebalancer = (fac.Create(con1) :?> LndClient)
+                Rebalancer = LNDSwaggerProvider()
                 Custody = fac.Create(sprintf "type=lnd-rest;server=https://lnd:lnd@127.0.0.1:%d;allowinsecure=true" settings.CUSTODY_RESTPORT)
                 ThirdParty = fac.Create(sprintf "type=lnd-rest;server=https://lnd:lnd@127.0.0.1:%d;allowinsecure=true" settings.THIRDPARTY_RESTPORT)
             }
@@ -168,8 +167,8 @@ module LightningNodeLauncher =
          member this.ConnectAllAsync() =
              let clients = this.GetClients()
              [|
-                 this.ConnectAsync(clients.Rebalancer, clients.ThirdParty)
-                 this.ConnectAsync(clients.Rebalancer, clients.Custody)
+                 this.ConnectAsync(clients.Rebalancer.AsILightningClient, clients.ThirdParty)
+                 this.ConnectAsync(clients.Rebalancer.AsILightningClient, clients.Custody)
                  this.ConnectAsync(clients.Custody, clients.ThirdParty)
              |] |> Task.WhenAll
 

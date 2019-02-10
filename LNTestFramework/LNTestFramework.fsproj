@@ -21,16 +21,21 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Content Include="docker-compose.yml" />
+    <Content Include="lnd.rpc.swagger.json" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Compile Include="TaskBuilder.fs" />
     <Compile Include="Utils.fs" />
     <Compile Include="LightningNodeLauncher.fs" />
     <Compile Include="DockerComposeGenerator.fs" />
     <Compile Include="Tests.fs" />
-    <Content Include="docker-compose.yml" />
     <PackageReference Include="BTCPayServer.Lightning.All" Version="1.1.0.5" />
     <PackageReference Include="BTCPayServer.Lightning.Common" Version="1.1.0.4" />
     <PackageReference Include="BTCPayServer.Lightning.LND" Version="1.1.0.6" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="15.9.0" />
+    <PackageReference Include="SwaggerProvider" Version="0.9.0" />
     <PackageReference Include="xunit" Version="2.4.0" />
     <PackageReference Include="NBitcoin" Version="4.1.1.81" />
     <Compile Include="Utils.fs" />
