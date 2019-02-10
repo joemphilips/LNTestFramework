@@ -194,6 +194,7 @@ module LightningNodeLauncher =
                     let! response = from.OpenChannel(request)
                     if response.Result = OpenChannelResult.CannotAffordFunding then
                         Console.WriteLine("Cannot afford fund")
+                        do! this.PrepareBTCFundsAsync()
                         let! addr = from.GetDepositAddress()
                         let! _ = cashCow.SendToAddressAsync(addr, Money.Coins(0.1m))
                         let! _ = cashCow.GenerateAsync(10)
@@ -216,11 +217,23 @@ module LightningNodeLauncher =
         member this.OpenChannel(cashCow: RPCClient, from: ILightningClient, dest: ILightningClient, amount: Money) =
             this.OpenChannelAsync(cashCow, from, dest, amount).GetAwaiter().GetResult()
 
-        member private this.PrepareFundsAsyncPrivate(amount: Money, confirmation: int option, onlyThisClient: ILightningClient option) =
+        member this.PrepareBTCFundsAsync() =
+            let clients = this.GetClients()
+            task {
+                let! count = clients.Bitcoin.GetBlockCountAsync()
+                let mat = clients.Bitcoin.Network.Consensus.CoinbaseMaturity
+                let notReady = count <= mat
+                if notReady then
+                    let! _ = clients.Bitcoin.GenerateAsync(mat + 1)
+                    return ()
+                return ()
+            }
+
+        member private this.PrepareLNFundsAsyncPrivate(amount: Money, confirmation: int option, onlyThisClient: ILightningClient option) =
             let clients = this.GetClients()
             let conf = defaultArg confirmation 3
             task {
-                let! _ = clients.Bitcoin.GenerateAsync(101)
+                do! this.PrepareBTCFundsAsync()
                 match onlyThisClient with
                 | Some c ->
                     let! addr = c.GetDepositAddress()
@@ -235,11 +248,11 @@ module LightningNodeLauncher =
                     return! clients.Bitcoin.GenerateAsync(conf)
             }
 
-        member this.PrepareFundsAsync(amount: Money, [<Optional>] ?confirmation: int, [<Optional>] ?onlyThisClient: ILightningClient) =
-            this.PrepareFundsAsyncPrivate(amount, confirmation, onlyThisClient)
+        member this.PrepareLNFundsAsync(amount: Money, [<Optional>] ?confirmation: int, [<Optional>] ?onlyThisClient: ILightningClient) =
+            this.PrepareLNFundsAsyncPrivate(amount, confirmation, onlyThisClient)
 
-        member this.PrepareFunds(amount: Money, [<Optional>] ?confirmation: int, [<Optional>] ?onlyThisClient: ILightningClient) =
-            this.PrepareFundsAsyncPrivate(amount, confirmation, onlyThisClient)
+        member this.PrepareLNFunds(amount: Money, [<Optional>] ?confirmation: int, [<Optional>] ?onlyThisClient: ILightningClient) =
+            this.PrepareLNFundsAsyncPrivate(amount, confirmation, onlyThisClient).GetAwaiter().GetResult()
 
 
     type LightningNodeLauncher() =
