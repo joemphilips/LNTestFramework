@@ -20,18 +20,33 @@ module LNDSwaggerProvider =
     let bitString(hash: byte[]) =
         BitConverter.ToString(hash).Replace("-", "").ToLower(CultureInfo.InvariantCulture)
 
+    let decimalToString (value: decimal) =
+        Convert.ToString(value, CultureInfo.InvariantCulture)
+
+    let int64ToString (value: int64) =
+        Convert.ToString(value, CultureInfo.InvariantCulture)
+
+    let doubleToString (value: double) =
+        Convert.ToString(value, CultureInfo.InvariantCulture)
+
+    let stringToInt64 (value: string) =
+        Convert.ToInt64(value, CultureInfo.InvariantCulture)
+
+
     let convertLndInvoice (resp: LNDSwaggerProvider.lnrpcInvoice): LightningInvoice =
         let result = new LightningInvoice()
         result.Id <- bitString(resp.RHash)
-        result.Amount <- LightMoney.Satoshis(Convert.ToInt64(resp.Value, CultureInfo.InvariantCulture))
+        result.Amount <- LightMoney.Satoshis(stringToInt64 resp.Value)
         result.BOLT11 <- resp.PaymentRequest
         result.Status <- LightningInvoiceStatus.Unpaid
-        let fromNow = Convert.ToInt64(resp.CreationDate, CultureInfo.InvariantCulture) - Convert.ToInt64(resp.Expiry, CultureInfo.InvariantCulture)
+        let fromNow = stringToInt64 resp.CreationDate - stringToInt64 resp.Expiry
         result.ExpiresAt <- DateTimeOffset.FromUnixTimeSeconds(fromNow)
         if resp.SettleDate <> null then
             result.PaidAt <- DateTimeOffset.FromUnixTimeSeconds(Convert.ToInt64(resp.CreationDate, CultureInfo.InvariantCulture)) |> Nullable
+            result.Status <- LightningInvoiceStatus.Paid
             result
         else if result.ExpiresAt < DateTimeOffset.UtcNow then
+            result.Status <- LightningInvoiceStatus.Expired
             result
         else
             result
@@ -48,7 +63,20 @@ module LNDSwaggerProvider =
                         }
                 member __.CreateInvoice(amount: LightMoney, desc: string, expiry: TimeSpan, token) =
                     task {
-                        return new LightningInvoice()
+                        let amountStr = decimalToString(amount.ToUnit(LightMoneyUnit.Satoshi))
+                        let expiryStr = doubleToString(Math.Round(expiry.TotalSeconds, 0))
+                        let arg = new LNDSwaggerProvider.lnrpcInvoice()
+                        arg.Value <- amountStr
+                        arg.Memo <- desc
+                        arg.Expiry <- expiryStr
+                        let resp = this.AddInvoice(arg)
+                        let result = new LightningInvoice()
+                        result.Id <- bitString(resp.RHash)
+                        result.Amount <- amount
+                        result.BOLT11 <- resp.PaymentRequest
+                        result.Status <- LightningInvoiceStatus.Unpaid
+                        result.ExpiresAt <- DateTimeOffset.UtcNow + expiry
+                        return result
                         }
                 member __.Listen (token) =
                     task {
