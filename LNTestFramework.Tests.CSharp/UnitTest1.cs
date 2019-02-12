@@ -21,7 +21,7 @@ namespace LNTestFramework.Tests.CSharp
                 builder.OpenChannel(clients.Bitcoin, clients.Custody, clients.ThirdParty, Money.Satoshis(500000m));
 
                 var destInfo = await clients.Custody.GetInfo();
-                var routeResp = await clients.Rebalancer.SwaggerClient.QueryRoutesAsync(destInfo.NodeInfo.NodeId.ToHex(), LightMoney.Satoshis(1000).ToString(), 1);
+                var routeResp = await clients.Rebalancer.SwaggerClient.QueryRoutesAsync(destInfo.NodeInfo.NodeId.ToHex(), "1000", 1);
                 Assert.NotNull(routeResp.Routes);
                 Assert.NotEmpty(routeResp.Routes);
 

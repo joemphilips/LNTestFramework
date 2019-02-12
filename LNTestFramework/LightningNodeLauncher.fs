@@ -68,7 +68,7 @@ module LightningNodeLauncher =
             THIRDPARTY_RESTPORT = ports.[4]
         }
 
-        let mutable maybeRunningProcess: Process option = None
+        let mutable _Process: Process = null
 
         let convertSettingsToEnvInStartInfo (settings: LauncherSettings): ProcessStartInfo =
             let mutable startInfo = new ProcessStartInfo()
@@ -112,12 +112,13 @@ module LightningNodeLauncher =
 
         interface IDisposable with
             member this.Dispose() =
-                match maybeRunningProcess with
-                | None -> ()
-                | Some p ->
+                if _Process <> null && not _Process.HasExited then
                     runDockerComposeDown()
-                    p.Dispose()
-                    maybeRunningProcess <- None
+                    if not _Process.HasExited then
+                        _Process.Kill()
+                        _Process.WaitForExit()
+                        _Process.Dispose()
+                        _Process <- null
                     printf "disposed Builder %s " name
 
         member this.startNode() =
@@ -129,8 +130,7 @@ module LightningNodeLauncher =
             startInfo.ErrorDialog <- true
             startInfo.RedirectStandardError <- true
             startInfo.RedirectStandardOutput <- true
-            let p = Process.Start(startInfo)
-            maybeRunningProcess <- Some p
+            _Process <- Process.Start(startInfo)
             // printf "%s" (p.StandardError.ReadToEnd())
             let c = this.GetClients()
             c |> checkConnected
