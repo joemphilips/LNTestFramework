@@ -11,4 +11,4 @@ fi
 cd $SCRIPT_DIR_PATH/LNTestFramework
 
 dotnet pack -c Release --include-symbols -p:SymbolPackageFormat=snupkg
-dotnet nuget push bin/Release/LNTestFramework.1.0.13.nupkg -k ${NUGET_API_KEY_LNTESTFRAMEWORK} -s https://api.nuget.org/v3/index.json
+dotnet nuget push bin/Release/LNTestFramework.1.0.14.nupkg -k ${NUGET_API_KEY_LNTESTFRAMEWORK} -s https://api.nuget.org/v3/index.json
