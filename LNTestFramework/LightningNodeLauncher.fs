@@ -31,7 +31,7 @@ type Clients = {
   Rebalancer: LndClient
   Custody: ILightningClient
   ThirdParty: ILightningClient
-}
+} with member x.GetAll() = seq { yield (x.Rebalancer :> ILightningClient); yield x.Custody; yield x.ThirdParty }
 
 [<AutoOpen>]
 module LightningNodeLauncher =
@@ -77,11 +77,11 @@ module LightningNodeLauncher =
                 startInfo.EnvironmentVariables.["LNLAUNCHER_" + k.Name] <- k.GetValue(settings).ToString()
             startInfo
 
-        let rec checkConnected clients =
+        let rec checkConnected (clients: Clients) =
             Task.Delay(2000) |> Async.AwaitTask |> Async.RunSynchronously
             try
                 Console.WriteLine("checking connection ...")
-                let _ = clients.Rebalancer.SwaggerClient.GetInfoAsync() |> Async.AwaitTask |> Async.RunSynchronously
+                let _ = clients.GetAll() |> Seq.map(fun c -> c.GetInfo())|> Task.WhenAll |> Async.AwaitTask |> Async.RunSynchronously
                 ()
             with
             | :? SocketException -> checkConnected clients
@@ -119,7 +119,7 @@ module LightningNodeLauncher =
                         _Process.WaitForExit()
                         _Process.Dispose()
                         _Process <- null
-                    printf "disposed Builder %s " name
+                    printfn "disposed Builder %s " name
 
         member this.startNode() =
             let startInfo = convertSettingsToEnvInStartInfo settings
@@ -145,7 +145,6 @@ module LightningNodeLauncher =
             let fac = new LightningClientFactory(network)
 
             let con1 = sprintf "type=lnd-rest;server=https://lnd:lnd@127.0.0.1:%d;allowinsecure=true" settings.BALANCER_RESTPORT
-            Console.WriteLine(con1)
             {
                 Bitcoin = new RPCClient(RPCCredentialString.Parse("0I5rfLbJEXsg:yJt7h7D8JpQy"),
                                         new Uri(sprintf "http://localhost:%d" settings.BITCOIND_RPCPORT),
@@ -266,7 +265,7 @@ module LightningNodeLauncher =
 
         member this.createBuilder ([<CallerMemberName>] [<Optional>] ?caller: string, [<Optional>] ?network: Network) =
              let composeFilePath = getComposeFilePath()
-             printf "using compose file %s" composeFilePath
+             printfn "using compose file %s" composeFilePath
              let name = match caller with
                         | None -> failwith "caller member name not spplyed!"
                         | Some i -> Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), i))
