@@ -1,5 +1,6 @@
 namespace LNTestFramework
 
+open System.Threading
 open FSharp.Control.Tasks.V2.ContextInsensitive
 open System
 open System.IO
@@ -157,7 +158,7 @@ module LightningNodeLauncher =
         member this.ConnectAsync(from: ILightningClient, dest: ILightningClient) =
             task {
                 let! info = dest.GetInfo()
-                let! _ = from.ConnectTo(info.NodeInfo)
+                do! from.ConnectTo(info.NodeInfo)
                 return ()
             }
 
@@ -252,6 +253,16 @@ module LightningNodeLauncher =
 
         member this.PrepareLNFunds(amount: Money, [<Optional>] ?confirmation: int, [<Optional>] ?onlyThisClient: ILightningClient) =
             this.PrepareLNFundsAsyncPrivate(amount, confirmation, onlyThisClient).GetAwaiter().GetResult()
+
+         member this.Pay(from: ILightningClient, dest: ILightningClient, amountMilliSatoshi: LightMoney) =
+            async {
+                let! invoice = dest.CreateInvoice(amountMilliSatoshi, "RouteCheckTest", TimeSpan.FromMinutes(5.0), new CancellationToken()) |> Async.AwaitTask
+                use! listener = dest.Listen() |> Async.AwaitTask
+                let waitTask = listener.WaitInvoice(new CancellationToken())
+                let! _ = from.Pay(invoice.BOLT11) |> Async.AwaitTask
+                let! paidInvoice = waitTask |> Async.AwaitTask
+                return ()
+            }
 
 
     type LightningNodeLauncher() =
