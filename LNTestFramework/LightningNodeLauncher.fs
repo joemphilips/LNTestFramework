@@ -188,8 +188,6 @@ module LightningNodeLauncher =
                 let! payResult = from.Pay(destInvoice.BOLT11)
                 let mutable notOpened = payResult.Result = PayResult.CouldNotFindRoute
                 while notOpened do
-                    let! payResult = from.Pay(destInvoice.BOLT11)
-                    notOpened <- payResult.Result = PayResult.CouldNotFindRoute
                     Console.WriteLine("Openning channel ...")
                     let! response = from.OpenChannel(request)
                     if response.Result = OpenChannelResult.CannotAffordFunding then
@@ -211,6 +209,8 @@ module LightningNodeLauncher =
                     if response.Result = OpenChannelResult.AlreadyExists then 
                         Console.WriteLine("already exists")
                         do! Task.Delay(1000)
+                    let! payResult = from.Pay(destInvoice.BOLT11)
+                    notOpened <- payResult.Result = PayResult.CouldNotFindRoute
                 return ()
             }
 
