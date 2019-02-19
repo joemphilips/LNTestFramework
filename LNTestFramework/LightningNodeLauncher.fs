@@ -1,7 +1,6 @@
 namespace LNTestFramework
 
 open System.Threading
-open FSharp.Control.Tasks.V2.ContextInsensitive
 open System
 open System.IO
 open System.Net
@@ -79,14 +78,16 @@ module LightningNodeLauncher =
             startInfo
 
         let rec checkConnected (clients: Clients) =
-            Task.Delay(2000) |> Async.AwaitTask |> Async.RunSynchronously
-            try
-                Console.WriteLine("checking connection ...")
-                let _ = clients.GetAll() |> Seq.map(fun c -> c.GetInfo())|> Task.WhenAll |> Async.AwaitTask |> Async.RunSynchronously
-                ()
-            with
-            | :? SocketException -> checkConnected clients
-            | :? AggregateException -> checkConnected clients
+            async {
+                do! Async.Sleep(2000)
+                try
+                    Console.WriteLine("checking connection ...")
+                    let _ = clients.GetAll() |> Seq.map(fun c -> c.GetInfo())|> Task.WhenAll |> Async.AwaitTask
+                    ()
+                with
+                | :? SocketException -> return! checkConnected clients
+                | :? AggregateException -> return! checkConnected clients
+            }
 
         let runDockerComposeDown() =
             let startInfo = convertSettingsToEnvInStartInfo settings
@@ -97,19 +98,25 @@ module LightningNodeLauncher =
             p.WaitForExit()
             ()
 
-        let waitLnSynced (bitcoin: RPCClient) (lnClient: ILightningClient) =
-            task {
-                let! lnInfo = lnClient.GetInfo()
-                let! height = bitcoin.GetBlockCountAsync()
+        let asyncWaitLnSynced (bitcoin: RPCClient) (lnClient: ILightningClient) =
+            async {
+                let! lnInfo = lnClient.GetInfo() |> Async.AwaitTask
+                let! height = bitcoin.GetBlockCountAsync() |> Async.AwaitTask
                 let mutable shouldWait = (lnInfo.BlockHeight < height)
                 while shouldWait do
-                    let! lnInfo = lnClient.GetInfo()
-                    let! height = bitcoin.GetBlockCountAsync()
+                    let! lnInfo = lnClient.GetInfo() |> Async.AwaitTask
+                    let! height = bitcoin.GetBlockCountAsync() |> Async.AwaitTask
                     shouldWait <- (lnInfo.BlockHeight < height)
                     printf "height in bitcoin is %s and height in lnd is %s \n" (height.ToString()) (lnInfo.BlockHeight.ToString())
-                    do! Task.Delay(500)
+                    do! Async.Sleep(500)
                 return ()
             }
+
+        let WaitLnSyncedAsync (bitcoin: RPCClient, lnClient: ILightningClient) =
+            (asyncWaitLnSynced bitcoin lnClient |> Async.StartAsTask).ConfigureAwait(false)
+
+        let WaitLnSynced (bitcoin: RPCClient, lnClient: ILightningClient) =
+            asyncWaitLnSynced bitcoin lnClient |> Async.RunSynchronously
 
         interface IDisposable with
             member this.Dispose() =
@@ -122,24 +129,29 @@ module LightningNodeLauncher =
                         _Process <- null
                     printfn "disposed Builder %s " name
 
+        member this.asyncStartNode() =
+            async {
+                let startInfo = convertSettingsToEnvInStartInfo settings
+                startInfo.EnvironmentVariables.["COMPOSE_PROJECT_NAME"] <- name
+                startInfo.FileName <- "docker-compose"
+                startInfo.Arguments <- " -f " + composeFilePath + " up"
+                // startInfo.ArgumentList.Add("-d")
+                startInfo.ErrorDialog <- true
+                startInfo.RedirectStandardError <- true
+                startInfo.RedirectStandardOutput <- true
+                _Process <- Process.Start(startInfo)
+                // printf "%s" (p.StandardError.ReadToEnd())
+                let c = this.GetClients()
+                do! c |> checkConnected
+                // lnd requires at least one block in the chain. (otherwise it will return 500 when tried to connect)
+                c.Bitcoin.Generate(1) |> ignore
+                // end we must wait until lnd can scan that block.
+                do! Async.Sleep 1000
+                ()
+            }
+
         member this.startNode() =
-            let startInfo = convertSettingsToEnvInStartInfo settings
-            startInfo.EnvironmentVariables.["COMPOSE_PROJECT_NAME"] <- name
-            startInfo.FileName <- "docker-compose"
-            startInfo.Arguments <- " -f " + composeFilePath + " up"
-            // startInfo.ArgumentList.Add("-d")
-            startInfo.ErrorDialog <- true
-            startInfo.RedirectStandardError <- true
-            startInfo.RedirectStandardOutput <- true
-            _Process <- Process.Start(startInfo)
-            // printf "%s" (p.StandardError.ReadToEnd())
-            let c = this.GetClients()
-            c |> checkConnected
-            // lnd requires at least one block in the chain. (otherwise it will return 500 when tried to connect)
-            c.Bitcoin.Generate(1) |> ignore
-            // end we must wait until lnd can scan that block.
-            Async.Sleep 1000 |> Async.RunSynchronously 
-            ()
+            this.asyncStartNode() |> Async.RunSynchronously
 
 
         member this.GetClients(): Clients =
@@ -155,104 +167,116 @@ module LightningNodeLauncher =
                 ThirdParty = fac.Create(sprintf "type=lnd-rest;server=https://lnd:lnd@127.0.0.1:%d;allowinsecure=true" settings.THIRDPARTY_RESTPORT)
             }
 
-        member this.ConnectAsync(from: ILightningClient, dest: ILightningClient) =
-            task {
-                let! info = dest.GetInfo()
-                do! from.ConnectTo(info.NodeInfo)
+        member this.asyncConnect(from: ILightningClient, dest: ILightningClient) =
+            async {
+                let! info = dest.GetInfo() |> Async.AwaitTask
+                do! from.ConnectTo(info.NodeInfo) |> Async.AwaitTask
                 return ()
             }
+
+         member this.ConnectAsync(from: ILightningClient, dest: ILightningClient) =
+             (this.asyncConnect(from, dest) |> Async.StartAsTask).ConfigureAwait(false)
 
          member this.Connect(from: ILightningClient, dest: ILightningClient) =
              this.ConnectAsync(from, dest).GetAwaiter().GetResult()
 
-         member this.ConnectAllAsync() =
+         member this.asyncConnectAll() =
              let clients = this.GetClients()
              [|
-                 this.ConnectAsync(clients.Rebalancer, clients.ThirdParty)
-                 this.ConnectAsync(clients.Rebalancer, clients.Custody)
-                 this.ConnectAsync(clients.Custody, clients.ThirdParty)
-             |] |> Task.WhenAll
+                 this.asyncConnect(clients.Rebalancer, clients.ThirdParty)
+                 this.asyncConnect(clients.Rebalancer, clients.Custody)
+                 this.asyncConnect(clients.Custody, clients.ThirdParty)
+             |] |> Async.Parallel
+
+         member this.ConnectAllAsync() = 
+             (this.asyncConnectAll() |> Async.StartAsTask).ConfigureAwait(false)
 
          member this.ConnectAll() =
              this.ConnectAllAsync().GetAwaiter().GetResult()
 
 
-        member this.OpenChannelAsync(cashCow: RPCClient, from: ILightningClient, dest: ILightningClient, amount: Money) =
-            task {
-                let! destInvoice = dest.CreateInvoice(LightMoney.op_Implicit(1000), "EnsureConnectedToDest", TimeSpan.FromSeconds(5000.0))
-                let! info = dest.GetInfo()
+        member this.asyncOpenChannel(cashCow: RPCClient, from: ILightningClient, dest: ILightningClient, amount: Money) =
+            async {
+                let! destInvoice = dest.CreateInvoice(LightMoney.op_Implicit(1000), "EnsureConnectedToDest", TimeSpan.FromSeconds(5000.0)) |> Async.AwaitTask
+                let! info = dest.GetInfo() |> Async.AwaitTask
                 let request = new OpenChannelRequest()
                 request.NodeInfo <- info.NodeInfo
                 request.ChannelAmount <- amount
                 request.FeeRate <- new NBitcoin.FeeRate(0.0004m)
-                let! payResult = from.Pay(destInvoice.BOLT11)
+                let! payResult = from.Pay(destInvoice.BOLT11) |> Async.AwaitTask
                 let mutable notOpened = payResult.Result = PayResult.CouldNotFindRoute
                 while notOpened do
                     Console.WriteLine("Openning channel ...")
-                    let! response = from.OpenChannel(request)
+                    let! response = from.OpenChannel(request)|> Async.AwaitTask
                     if response.Result = OpenChannelResult.CannotAffordFunding then
                         Console.WriteLine("Cannot afford fund")
                         do! this.PrepareBTCFundsAsync()
-                        let! addr = from.GetDepositAddress()
-                        let! _ = cashCow.SendToAddressAsync(addr, Money.Coins(0.1m))
-                        let! _ = cashCow.GenerateAsync(10)
-                        do! waitLnSynced cashCow from
-                        do! waitLnSynced cashCow dest
+                        let! addr = from.GetDepositAddress()|> Async.AwaitTask
+                        let! _ = cashCow.SendToAddressAsync(addr, Money.Coins(0.1m))|> Async.AwaitTask
+                        let! _ = cashCow.GenerateAsync(10)|> Async.AwaitTask
+                        do! asyncWaitLnSynced cashCow from
+                        do! asyncWaitLnSynced cashCow dest
                     if response.Result = OpenChannelResult.PeerNotConnected then
                         Console.WriteLine("Peer not conn")
-                        do! from.ConnectTo(info.NodeInfo)
+                        do! from.ConnectTo(info.NodeInfo) |> Async.AwaitTask
                     if response.Result = OpenChannelResult.NeedMoreConf then
                         Console.WriteLine("Need more conf")
-                        let! _ = cashCow.GenerateAsync(6)
-                        do! waitLnSynced cashCow from
-                        do! waitLnSynced cashCow dest
+                        let! _ = cashCow.GenerateAsync(6) |> Async.AwaitTask
+                        do! asyncWaitLnSynced cashCow from
+                        do! asyncWaitLnSynced cashCow dest
                     if response.Result = OpenChannelResult.AlreadyExists then 
                         Console.WriteLine("already exists")
-                        do! Task.Delay(1000)
-                    let! payResult = from.Pay(destInvoice.BOLT11)
+                        do! Async.Sleep(1000) 
+                    let! payResult = from.Pay(destInvoice.BOLT11) |> Async.AwaitTask
                     notOpened <- payResult.Result = PayResult.CouldNotFindRoute
                 return ()
             }
+
+        member this.OpenChannelAsync(cashCow: RPCClient, from: ILightningClient, dest: ILightningClient, amount: Money) =
+            (this.asyncOpenChannel(cashCow, from, dest, amount) |> Async.StartAsTask).ConfigureAwait(false)
 
         member this.OpenChannel(cashCow: RPCClient, from: ILightningClient, dest: ILightningClient, amount: Money) =
             this.OpenChannelAsync(cashCow, from, dest, amount).GetAwaiter().GetResult()
 
         member this.PrepareBTCFundsAsync() =
             let clients = this.GetClients()
-            task {
-                let! count = clients.Bitcoin.GetBlockCountAsync()
+            async {
+                let! count = clients.Bitcoin.GetBlockCountAsync() |> Async.AwaitTask
                 let mat = clients.Bitcoin.Network.Consensus.CoinbaseMaturity
                 let notReady = count <= mat
                 if notReady then
-                    let! _ = clients.Bitcoin.GenerateAsync(mat + 1)
+                    let! _ = clients.Bitcoin.GenerateAsync(mat + 1) |> Async.AwaitTask
                     return ()
                 return ()
             }
 
-        member private this.PrepareLNFundsAsyncPrivate(amount: Money, confirmation: int option, onlyThisClient: ILightningClient option) =
+        member private this.asyncPrepareLNFundsPrivate(amount: Money, confirmation: int option, onlyThisClient: ILightningClient option) =
             let clients = this.GetClients()
             let conf = defaultArg confirmation 3
-            task {
+            async {
                 do! this.PrepareBTCFundsAsync()
                 match onlyThisClient with
                 | Some c ->
-                    let! addr = c.GetDepositAddress()
-                    let! _ = clients.Bitcoin.SendToAddressAsync(addr, amount)
-                    return! clients.Bitcoin.GenerateAsync(conf)
+                    let! addr = c.GetDepositAddress()|> Async.AwaitTask
+                    let! _ = clients.Bitcoin.SendToAddressAsync(addr, amount)|> Async.AwaitTask
+                    return! clients.Bitcoin.GenerateAsync(conf)|> Async.AwaitTask
                 | None ->
-                    let! addr1 = clients.Custody.GetDepositAddress()
-                    let! tmp = clients.Rebalancer.SwaggerClient.NewWitnessAddressAsync()
+                    let! addr1 = clients.Custody.GetDepositAddress()|> Async.AwaitTask
+                    let! tmp = clients.Rebalancer.SwaggerClient.NewWitnessAddressAsync()|> Async.AwaitTask
                     let addr2 = NBitcoin.BitcoinAddress.Create(tmp.Address, network)
-                    let! addr3 = clients.ThirdParty.GetDepositAddress()
-                    let! _ = [addr1; addr2; addr3] |> List.map(fun a -> clients.Bitcoin.SendToAddressAsync(a, amount)) |> Task.WhenAll
-                    return! clients.Bitcoin.GenerateAsync(conf)
+                    let! addr3 = clients.ThirdParty.GetDepositAddress()|> Async.AwaitTask
+                    let! _ = [addr1; addr2; addr3] |> List.map(fun a -> clients.Bitcoin.SendToAddressAsync(a, amount)) |> Task.WhenAll |> Async.AwaitTask
+                    return! clients.Bitcoin.GenerateAsync(conf)|> Async.AwaitTask
             }
 
+        member this.asyncPrepareFunds(amount: Money, ?confirmation: int, ?onlyThisClient: ILightningClient) =
+            this.asyncPrepareLNFundsPrivate(amount, confirmation, onlyThisClient)
+
         member this.PrepareLNFundsAsync(amount: Money, [<Optional>] ?confirmation: int, [<Optional>] ?onlyThisClient: ILightningClient) =
-            this.PrepareLNFundsAsyncPrivate(amount, confirmation, onlyThisClient)
+            (this.asyncPrepareLNFundsPrivate(amount, confirmation, onlyThisClient) |> Async.StartAsTask).ConfigureAwait
 
         member this.PrepareLNFunds(amount: Money, [<Optional>] ?confirmation: int, [<Optional>] ?onlyThisClient: ILightningClient) =
-            this.PrepareLNFundsAsyncPrivate(amount, confirmation, onlyThisClient).GetAwaiter().GetResult()
+            this.asyncPrepareLNFundsPrivate(amount, confirmation, onlyThisClient) |> Async.RunSynchronously
 
          member this.Pay(from: ILightningClient, dest: ILightningClient, amountMilliSatoshi: LightMoney) =
             async {
